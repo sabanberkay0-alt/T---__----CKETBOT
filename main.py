@@ -12,15 +12,17 @@ bot = commands.Bot(command_prefix="ESH!", intents=intents)
 TICKET_CATEGORY_ID = 1474659641781911623
 TICKET_LOG_CHANNEL_ID = 1474656783082459320
 SUPPORT_ROLE_ID = 1457121772515098779
-
 # ===========================================
 
+
+# ================= DROPDOWN =================
 class TicketSelect(Select):
     def __init__(self):
         options = [
             discord.SelectOption(label="Destek", description="Genel destek talebi"),
             discord.SelectOption(label="Şikayet", description="Bir kullanıcıyı şikayet et"),
-            discord.SelectOption(label="Yetkili Başvuru", description="Yetkili olmak için başvur")
+            discord.SelectOption(label="Yetkili Başvuru", description="Yetkili olmak için başvur"),
+            discord.SelectOption(label="Partner", description="Sunucu partnerlik başvurusu")
         ]
 
         super().__init__(
@@ -33,8 +35,9 @@ class TicketSelect(Select):
     async def callback(self, interaction: discord.Interaction):
         guild = interaction.guild
         user = interaction.user
+        selected = self.values[0]
 
-        # Kullanıcının açık ticketı var mı?
+        # Açık ticket kontrol
         for channel in guild.text_channels:
             if channel.topic == str(user.id):
                 return await interaction.response.send_message(
@@ -55,9 +58,36 @@ class TicketSelect(Select):
         await ticket_channel.set_permissions(guild.default_role, read_messages=False)
         await ticket_channel.set_permissions(support_role, read_messages=True, send_messages=True)
 
+        # Kategoriye özel mesaj
+        if selected == "Partner":
+            description_text = (
+                "🤝 **Partnerlik Başvurusu**\n\n"
+                "• Sunucu Adı:\n"
+                "• Üye Sayısı:\n"
+                "• Davet Linki:\n"
+                "• Açıklama:"
+            )
+        elif selected == "Yetkili Başvuru":
+            description_text = (
+                "🛡️ **Yetkili Başvurusu**\n\n"
+                "• Yaşınız:\n"
+                "• Günlük Aktiflik Süreniz:\n"
+                "• Daha önce yetkili oldunuz mu?:\n"
+                "• Neden sizi seçmeliyiz?"
+            )
+        elif selected == "Şikayet":
+            description_text = (
+                "⚠️ **Şikayet Talebi**\n\n"
+                "• Şikayet edilen kullanıcı:\n"
+                "• Olay açıklaması:\n"
+                "• Kanıt (varsa):"
+            )
+        else:
+            description_text = "🎫 Destek ekibi sizinle ilgilenecektir."
+
         embed = discord.Embed(
-            title="🎫 Ticket Oluşturuldu",
-            description=f"{user.mention} talebiniz alındı.\nKategori: **{self.values[0]}**",
+            title=f"🎫 {selected} Ticket",
+            description=f"{user.mention}\n\n{description_text}",
             color=discord.Color.green()
         )
 
@@ -66,20 +96,24 @@ class TicketSelect(Select):
 
         log_channel = guild.get_channel(TICKET_LOG_CHANNEL_ID)
         if log_channel:
-            await log_channel.send(f"📩 Yeni Ticket: {ticket_channel.mention} | Açan: {user.mention}")
+            await log_channel.send(
+                f"📩 Yeni Ticket: {ticket_channel.mention} | Tür: {selected} | Açan: {user.mention}"
+            )
 
 
+# ================= ANA PANEL VIEW =================
 class TicketView(View):
     def __init__(self):
         super().__init__(timeout=None)
         self.add_item(TicketSelect())
 
 
+# ================= KAPATMA BUTONU =================
 class CloseTicketView(View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="🔒 Ticket Kapat", style=discord.ButtonStyle.red)
+    @discord.ui.button(label="🔒 Ticket Kapat", style=discord.ButtonStyle.red, custom_id="close_ticket_button")
     async def close(self, interaction: discord.Interaction, button: Button):
 
         channel = interaction.channel
@@ -91,9 +125,12 @@ class CloseTicketView(View):
         # Transcript oluştur
         transcript = ""
         async for message in channel.history(limit=None, oldest_first=True):
-            transcript += f"[{message.created_at.strftime('%H:%M')}] {message.author}: {message.content}\n"
+            transcript += f"[{message.created_at.strftime('%d/%m/%Y %H:%M')}] {message.author}: {message.content}\n"
 
-        file = discord.File(io.StringIO(transcript), filename=f"{channel.name}-transcript.txt")
+        file = discord.File(
+            io.BytesIO(transcript.encode()),
+            filename=f"{channel.name}-transcript.txt"
+        )
 
         if log_channel:
             await log_channel.send(
@@ -117,6 +154,7 @@ async def ticketpanel(ctx):
     await ctx.send(embed=embed, view=TicketView())
 
 
+# ================= READY =================
 @bot.event
 async def on_ready():
     bot.add_view(TicketView())
