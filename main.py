@@ -161,4 +161,4 @@ async def on_ready():
     bot.add_view(CloseTicketView())
     print(f"{bot.user} aktif!")
 
-bot.run(TOKEN)
+bot.run("TOKEN")
