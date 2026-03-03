@@ -1,59 +1,49 @@
-import os
 import discord
 from discord.ext import commands
-from discord.ui import Button, View
-from discord import ButtonStyle
+from discord.ui import View, Select, Button
+import asyncio
+import io
+from datetime import datetime
 
-# ================= TOKEN =================
-TOKEN = os.environ.get("TOKEN")
-
-if not TOKEN:
-    print("TOKEN bulunamadı!")
-    exit()
-
-# ================= INTENTS =================
 intents = discord.Intents.all()
-
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="ESH!", intents=intents)
 
 # ================= AYARLAR =================
-TICKET_CHANNEL_1 = 1457381313018593421
-TICKET_CHANNEL_2 = 1445515675262128219
 TICKET_CATEGORY_ID = 1474659641781911623
+TICKET_LOG_CHANNEL_ID = 1474656783082459320
+SUPPORT_ROLE_ID = 1457121772515098779
 
-# ================= BOT READY =================
-@bot.event
-async def on_ready():
-    print(f"{bot.user} aktif 🚀")
+# ===========================================
 
-# ================= TICKET BUTONU =================
-class TicketButton(View):
+class TicketSelect(Select):
     def __init__(self):
-        super().__init__(timeout=None)
+        options = [
+            discord.SelectOption(label="Destek", description="Genel destek talebi"),
+            discord.SelectOption(label="Şikayet", description="Bir kullanıcıyı şikayet et"),
+            discord.SelectOption(label="Yetkili Başvuru", description="Yetkili olmak için başvur")
+        ]
 
-    @discord.ui.button(label="🎫 Ticket Aç", style=ButtonStyle.green)
-    async def open_ticket(self, interaction: discord.Interaction, button: Button):
+        super().__init__(
+            placeholder="Bir kategori seçin...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
 
+    async def callback(self, interaction: discord.Interaction):
         guild = interaction.guild
         user = interaction.user
 
         # Kullanıcının açık ticketı var mı?
         for channel in guild.text_channels:
             if channel.topic == str(user.id):
-                await interaction.response.send_message(
-                    "❌ Zaten açık ticketın var!",
+                return await interaction.response.send_message(
+                    "❌ Zaten açık bir ticketın var!",
                     ephemeral=True
                 )
-                return
 
         category = guild.get_channel(TICKET_CATEGORY_ID)
-
-        if not category:
-            await interaction.response.send_message(
-                "❌ Ticket kategorisi bulunamadı!",
-                ephemeral=True
-            )
-            return
+        support_role = guild.get_role(SUPPORT_ROLE_ID)
 
         ticket_channel = await guild.create_text_channel(
             name=f"ticket-{user.name}",
@@ -63,49 +53,74 @@ class TicketButton(View):
 
         await ticket_channel.set_permissions(user, read_messages=True, send_messages=True)
         await ticket_channel.set_permissions(guild.default_role, read_messages=False)
-        await ticket_channel.set_permissions(guild.me, read_messages=True)
+        await ticket_channel.set_permissions(support_role, read_messages=True, send_messages=True)
 
-        await ticket_channel.send(
-            f"👋 {user.mention} Ticket açıldı!\n"
-            "🔒 Kapatmak için: `!kapat`"
+        embed = discord.Embed(
+            title="🎫 Ticket Oluşturuldu",
+            description=f"{user.mention} talebiniz alındı.\nKategori: **{self.values[0]}**",
+            color=discord.Color.green()
         )
 
-        await interaction.response.send_message(
-            "✅ Ticket oluşturuldu!",
-            ephemeral=True
-        )
+        await ticket_channel.send(embed=embed, view=CloseTicketView())
+        await interaction.response.send_message("✅ Ticket oluşturuldu!", ephemeral=True)
 
-# ================= PANEL =================
+        log_channel = guild.get_channel(TICKET_LOG_CHANNEL_ID)
+        if log_channel:
+            await log_channel.send(f"📩 Yeni Ticket: {ticket_channel.mention} | Açan: {user.mention}")
+
+
+class TicketView(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(TicketSelect())
+
+
+class CloseTicketView(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="🔒 Ticket Kapat", style=discord.ButtonStyle.red)
+    async def close(self, interaction: discord.Interaction, button: Button):
+
+        channel = interaction.channel
+        guild = interaction.guild
+        log_channel = guild.get_channel(TICKET_LOG_CHANNEL_ID)
+
+        await interaction.response.send_message("⏳ Ticket kapatılıyor...", ephemeral=True)
+
+        # Transcript oluştur
+        transcript = ""
+        async for message in channel.history(limit=None, oldest_first=True):
+            transcript += f"[{message.created_at.strftime('%H:%M')}] {message.author}: {message.content}\n"
+
+        file = discord.File(io.StringIO(transcript), filename=f"{channel.name}-transcript.txt")
+
+        if log_channel:
+            await log_channel.send(
+                f"📁 Ticket kapatıldı: {channel.name}",
+                file=file
+            )
+
+        await asyncio.sleep(2)
+        await channel.delete()
+
+
+# ================= PANEL KOMUTU =================
 @bot.command()
 @commands.has_permissions(administrator=True)
-async def panel(ctx):
+async def ticketpanel(ctx):
+    embed = discord.Embed(
+        title="🎫 Destek Sistemi",
+        description="Aşağıdan kategori seçerek ticket oluşturabilirsiniz.",
+        color=discord.Color.blue()
+    )
+    await ctx.send(embed=embed, view=TicketView())
 
-    view = TicketButton()
 
-    kanal1 = bot.get_channel(TICKET_CHANNEL_1)
-    kanal2 = bot.get_channel(TICKET_CHANNEL_2)
+@bot.event
+async def on_ready():
+    bot.add_view(TicketView())
+    bot.add_view(CloseTicketView())
+    print(f"{bot.user} aktif!")
 
-    if kanal1:
-        await kanal1.send("🎫 Ticket Açmak İçin Butona Basın", view=view)
-
-    if kanal2:
-        await kanal2.send("🎫 Ticket Açmak İçin Butona Basın", view=view)
-
-    await ctx.send("✅ Panel gönderildi.")
-
-# ================= TICKET KAPAT =================
-@bot.command()
-async def kapat(ctx):
-
-    if not ctx.channel.topic:
-        await ctx.send("❌ Bu kanal ticket değil!")
-        return
-
-    await ctx.send("⏳ Ticket 5 saniye sonra kapanıyor...")
-
-    await discord.utils.sleep_until(discord.utils.utcnow() + discord.timedelta(seconds=5))
-
-    await ctx.channel.delete()
-
-# ================= BOT BAŞLAT =================
 bot.run(TOKEN)
